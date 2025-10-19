@@ -67,7 +67,7 @@
         .animate-fade-in-up {
             animation: fadeInUp 0.5s ease-out forwards;
             opacity: 0; /* Start hidden */
-        }
+        }   
         @keyframes fadeInUp {
             from {
                 opacity: 0;
@@ -148,7 +148,7 @@
         <!-- Start Screen -->
         <div id="start-screen" class="text-center p-10 animate-fade-in-up">
             <h1 class="text-5xl font-extrabold text-secondary mb-4 drop-shadow-lg animate-bounce-slow">
-                <span class="text-primary">B</span>rainwave <span class="text-primary">K</span>nowledge <span class="text-secondary">H</span>ub
+                <span class="text-primary">B</span>rainwave <span class="text-primary">K</span>nowledge <span class="text-primary">H</span>ub
             </h1>
             <p class="text-xl text-text-muted mb-8">Ready to master a new domain? Define your learning path below.</p>
             
@@ -160,9 +160,26 @@
             <!-- New Topic Input Field -->
             <div class="mb-8 text-left">
                 <label for="quiz-topic" class="block text-lg font-medium text-text-light mb-2">Enter Your Quiz Topic:</label>
-                <input type="text" id="quiz-topic" placeholder="e.g., Quantitavie Aptitude, Programming, Genreal knowledge" 
-                       class="w-full p-4 rounded-xl bg-zinc-800 border border-primary/50 text-text-light placeholder-zinc-500 
-                              focus:ring-secondary focus:border-secondary transition duration-300 shadow-inner shadow-black/50">
+                <div class="flex items-center gap-3">
+                 <input 
+                    type="text" 
+                    id="quiz-topic" 
+                    placeholder="Enter quiz topic — e.g., Quantitative Aptitude, Programming, General Knowledge"
+                    class="w-full p-4 pr-14 rounded-2xl bg-zinc-900/80 border border-zinc-700 text-zinc-100 
+                        placeholder-zinc-500 focus:ring-2 focus:ring-secondary focus:border-secondary 
+                        outline-none transition-all duration-300 shadow-inner shadow-black/50 
+                        backdrop-blur-lg"
+                >
+                <button 
+                     id="micBtn"
+                     class="absolute right-14 top-1/2 top-[49%] -translate-y-1/2 flex items-center justify-center 
+                        w-10 h-10 rounded-full bg-gradient-to-r from-secondary to-primary 
+                        text-white text-lg font-semibold shadow-md hover:shadow-lg hover:from-primary hover:to-secondary 
+                        transition-all duration-300 active:scale-95 focus:outline-none"
+                    title="Speak your topic"
+                >
+                🎤
+                </div>
             </div>
 
             <!-- Difficulty Selector (NEW) -->
@@ -852,6 +869,38 @@
             elements.nextButton.addEventListener('click', handleNext);
             elements.prevButton.addEventListener('click', handlePrevious);
         };
+
+        // 🎤 Speech-to-Text Feature (for #quiz-topic)
+const micBtn = document.getElementById('micBtn');
+const quizTopicInput = document.getElementById('quiz-topic');
+
+if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
+  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+  const recognition = new SpeechRecognition();
+  recognition.lang = 'en-US';
+  recognition.interimResults = false;
+
+  micBtn.addEventListener('click', () => {
+    recognition.start();
+    micBtn.textContent = '🎙️ Listening...';
+  });
+
+  recognition.onresult = (event) => {
+    const transcript = event.results[0][0].transcript;
+    quizTopicInput.value = transcript;
+    micBtn.textContent = '🎤';
+  };
+
+  recognition.onerror = (err) => {
+    console.error('Speech recognition error:', err);
+    micBtn.textContent = '🎤';
+  };
+} else {
+  micBtn.disabled = true;
+  micBtn.textContent = '❌';
+  console.warn('Speech recognition not supported in this browser.');
+}
+
     </script>
 </body>
 </html>
