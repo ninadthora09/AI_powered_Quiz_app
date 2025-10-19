@@ -1,0 +1,857 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Quiz app</title>
+    <!-- Load Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script type="module">
+        // Firebase Imports (Boilerplate requirement for the environment)
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        // Global variables provided by the environment
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+        const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : null;
+        const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+
+        // Initialize Firebase (Required even if not used for persistence)
+        let auth, db;
+        if (firebaseConfig) {
+            const app = initializeApp(firebaseConfig);
+            auth = getAuth(app);
+            db = getFirestore(app);
+
+            // Sign in using the custom token or anonymously
+            if (initialAuthToken) {
+                signInWithCustomToken(auth, initialAuthToken).catch(e => {
+                    console.error("Custom token sign-in failed, falling back to anonymous:", e);
+                    signInAnonymously(auth);
+                });
+            } else {
+                signInAnonymously(auth);
+            }
+        }
+    </script>
+    <!-- Configure Tailwind to use the Inter font and a vibrant color palette -->
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ['Inter', 'sans-serif'],
+                    },
+                    colors: {
+                        'primary': '#A855F7', // Brighter Indigo/Violet
+                        'secondary': '#22D3EE', // Cyan for accents
+                        'dark-bg': '#0A0A0A', // Near black
+                        'card-bg': '#18181B', // Zinc 900
+                        'text-light': '#FAFAFA', // White
+                        'text-muted': '#A1A1AA', // Zinc 400
+                        'success': '#4ADE80', // Green for correct
+                        'error': '#F87171', // Red for incorrect
+                    },
+                    boxShadow: {
+                        'neon-primary': '0 0 10px #A855F7, 0 0 20px #A855F7',
+                        'neon-success': '0 0 8px #4ADE80',
+                    }
+                }
+            }
+        }
+    </script>
+    <!-- Internal styles for custom animations and states -->
+    <style>
+        /* --- General Animations --- */
+        .animate-fade-in-up {
+            animation: fadeInUp 0.5s ease-out forwards;
+            opacity: 0; /* Start hidden */
+        }
+        @keyframes fadeInUp {
+            from {
+                opacity: 0;
+                transform: translateY(20px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+        /* High Score Celebration */
+        .high-score-animation {
+            animation: pulseScale 1.5s ease-in-out;
+        }
+        @keyframes pulseScale {
+            0% { transform: scale(1); opacity: 1; }
+            50% { transform: scale(1.05); opacity: 1; }
+            100% { transform: scale(1); opacity: 1; }
+        }
+
+        /* --- Quiz Specific Styles & Transitions --- */
+        .quiz-option {
+            transition: all 0.2s ease-out;
+            transform: translateY(0);
+        }
+        .quiz-option:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 10px rgba(0, 0, 0, 0.5), 0 0 10px rgba(34, 211, 238, 0.5); /* Cyan glow on hover */
+        }
+        .quiz-option:focus {
+            outline: 3px solid #A855F7;
+            outline-offset: 3px;
+        }
+        .quiz-option.selected {
+            background-color: #A855F7; 
+            border-color: #A855F7;
+            box-shadow: 0 4px 10px rgba(0, 0, 0, 0.5), 0 0 15px #A855F7;
+        }
+        .quiz-option.correct {
+            background-color: #4ADE80; /* Success */
+            border-color: #4ADE80;
+            box-shadow: 0 0 20px #4ADE80;
+        }
+        .quiz-option.incorrect {
+            background-color: #F87171; /* Error */
+            border-color: #F87171;
+            opacity: 0.9;
+        }
+        .quiz-option input[type="radio"] {
+            position: absolute;
+            opacity: 0;
+            cursor: pointer;
+        }
+        /* Pulse for Feedback */
+        .feedback-pulse {
+            animation: pulse 1.5s infinite;
+        }
+        @keyframes pulse {
+            0%, 100% { box-shadow: 0 0 0 0 rgba(168, 85, 247, 0.5); }
+            50% { box-shadow: 0 0 15px 5px rgba(168, 85, 247, 0.9); }
+        }
+    </style>
+</head>
+<body class="bg-dark-bg font-sans min-h-screen flex items-center justify-center p-4">
+
+    <!-- Main Quiz Container Card -->
+    <div id="quiz-container" class="w-full max-w-4xl bg-card-bg text-text-light rounded-3xl shadow-2xl shadow-black/50 p-6 sm:p-10 lg:p-12 border border-zinc-800">
+
+        <!-- Loading Indicator -->
+        <div id="loading-indicator" class="hidden flex flex-col items-center justify-center p-12 text-center animate-fade-in-up">
+            <svg class="animate-spin h-10 w-10 text-secondary" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+            </svg>
+            <p class="mt-6 text-xl text-text-light font-medium">Synthesizing knowledge on your topic...</p>
+        </div>
+
+        <!-- Start Screen -->
+        <div id="start-screen" class="text-center p-10 animate-fade-in-up">
+            <h1 class="text-5xl font-extrabold text-secondary mb-4 drop-shadow-lg animate-bounce-slow">
+                <span class="text-primary">B</span>rainwave <span class="text-primary">K</span>nowledge <span class="text-secondary">H</span>ub
+            </h1>
+            <p class="text-xl text-text-muted mb-8">Ready to master a new domain? Define your learning path below.</p>
+            
+            <!-- NEW HIGH SCORE DISPLAY -->
+            <p class="text-lg text-text-light mb-6 font-semibold">
+                Your Best Score: <span id="start-high-score" class="text-secondary font-extrabold">--</span>
+            </p>
+
+            <!-- New Topic Input Field -->
+            <div class="mb-8 text-left">
+                <label for="quiz-topic" class="block text-lg font-medium text-text-light mb-2">Enter Your Quiz Topic:</label>
+                <input type="text" id="quiz-topic" placeholder="e.g., Quantitavie Aptitude, Programming, Genreal knowledge" 
+                       class="w-full p-4 rounded-xl bg-zinc-800 border border-primary/50 text-text-light placeholder-zinc-500 
+                              focus:ring-secondary focus:border-secondary transition duration-300 shadow-inner shadow-black/50">
+            </div>
+
+            <!-- Difficulty Selector (NEW) -->
+            <div class="mb-10 text-left">
+                <label class="block text-lg font-medium text-text-light mb-2">Select Difficulty:</label>
+                <div id="difficulty-selector" class="flex w-full bg-zinc-700/50 rounded-xl p-1 shadow-inner shadow-black/50">
+                    <label class="difficulty-option flex-1 text-center py-3 rounded-lg text-text-light font-semibold cursor-pointer transition duration-200" data-difficulty="Easy">
+                        <input type="radio" name="difficulty" value="Easy" class="hidden"> Easy
+                    </label>
+                    <label class="difficulty-option flex-1 text-center py-3 rounded-lg text-text-light font-semibold cursor-pointer transition duration-200 bg-primary shadow-lg shadow-primary/30" data-difficulty="Medium">
+                        <input type="radio" name="difficulty" value="Medium" class="hidden" checked> Medium
+                    </label>
+                    <label class="difficulty-option flex-1 text-center py-3 rounded-lg text-text-light font-semibold cursor-pointer transition duration-200" data-difficulty="Advanced">
+                        <input type="radio" name="difficulty" value="Advanced" class="hidden"> Advanced
+                    </label>
+                </div>
+            </div>
+
+            <button id="start-button" class="px-12 py-4 rounded-xl text-xl font-bold bg-primary text-dark-bg 
+                                            shadow-neon-primary hover:bg-fuchsia-600 transition duration-300 disabled:opacity-50" disabled>
+                Generate 5-Question Quiz
+            </button>
+        </div>
+
+        <!-- Quiz Screen (Hidden initially) -->
+        <div id="quiz-screen" class="hidden animate-fade-in-up">
+            <!-- Header, Progress, and Timer -->
+            <header class="mb-8 border-b border-zinc-700 pb-4 flex justify-between items-center flex-wrap gap-4">
+                <div>
+                    <p class="text-lg font-mono text-secondary uppercase tracking-widest">Topic: <span id="quiz-topic-display"></span></p>
+                    <p class="text-sm text-text-muted mt-2">Question <span id="current-q-number">1</span> of <span id="total-q-number">5</span></p>
+                </div>
+                <div class="flex flex-col items-end">
+                    <div id="timer-display" class="text-4xl font-mono font-bold text-secondary bg-zinc-800 px-4 py-1 rounded-lg shadow-inner shadow-black/50 transition duration-300">00:60</div>
+                    <div id="progress-bar" class="w-40 bg-zinc-700 rounded-full h-3 mt-2 overflow-hidden">
+                        <div id="progress-indicator" class="bg-primary h-3 rounded-full transition-all duration-500 ease-out" style="width: 0%;"></div>
+                    </div>
+                </div>
+            </header>
+
+            <!-- Question and Options Area -->
+            <main class="mb-8 min-h-[300px]">
+                <h2 id="question-text" class="text-2xl sm:text-3xl font-bold mb-8 leading-snug text-text-light">
+                    [Question text will be loaded here...]
+                </h2>
+
+                <!-- Answer Options -->
+                <div id="options-container" class="space-y-4">
+                    <!-- Options populated by JS -->
+                </div>
+                
+                <!-- Feedback Area (Explanation & Correctness) -->
+                <div id="feedback-area" class="mt-8 p-6 rounded-xl bg-zinc-800/70 border-l-4 hidden feedback-pulse">
+                    <p id="feedback-correctness" class="font-extrabold text-xl mb-3"></p>
+                    <p id="feedback-text" class="text-base text-text-light"></p>
+                    <p id="feedback-sources" class="text-xs text-text-muted mt-3 italic"></p>
+                </div>
+
+            </main>
+
+            <!-- Navigation Buttons -->
+            <footer class="flex justify-between items-center pt-6 border-t border-zinc-700">
+                <button id="prev-button" class="px-8 py-3 rounded-lg text-lg font-semibold bg-zinc-700 text-text-light hover:bg-zinc-600 transition duration-200 disabled:opacity-40" disabled>
+                    &larr; Previous
+                </button>
+
+                <button id="next-button" class="px-10 py-3 rounded-xl text-lg font-bold bg-secondary text-dark-bg 
+                                                shadow-lg shadow-cyan-400/50 hover:bg-cyan-500 transition duration-300 disabled:opacity-40" disabled>
+                    Next Question
+                </button>
+            </footer>
+        </div>
+
+        <!-- Results Screen (Hidden initially) -->
+        <div id="results-screen" class="hidden text-center p-12 animate-fade-in-up">
+            <h2 class="text-5xl font-extrabold text-success mb-4 drop-shadow-neon-success">Quiz Completed!</h2>
+            
+            <!-- Updated score display -->
+            <p class="text-3xl text-text-light mb-2">Your Score: <span id="final-score" class="font-bold text-success text-4xl"></span> / <span id="total-questions-result" class="text-4xl"></span></p>
+            
+            <!-- High Score Message (Will get animation class dynamically) -->
+            <p id="result-high-score-message" class="text-xl font-medium mb-8 text-secondary">
+                You matched your previous best score of <span id="high-score-result" class="font-bold">0</span>!
+            </p>
+
+            <button id="restart-button" class="px-12 py-4 rounded-xl text-xl font-bold bg-primary text-dark-bg 
+                                            shadow-neon-primary hover:bg-fuchsia-600 transition duration-300">
+                Start a New Topic
+            </button>
+        </div>
+
+    </div>
+
+    <script>
+        // WRAPPING THE MAIN LOGIC IN window.onload TO ENSURE ALL DOM ELEMENTS ARE LOADED BEFORE ACCESSING THEM
+        window.onload = function() {
+            // --- API & Config Constants ---
+            const API_KEY = "AIzaSyDVTu5WrtWKZXQfUDOTfuQCfNJJTE4BnZ0"; // Environment handles this
+            const API_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${API_KEY}`;
+            const QUESTION_COUNT = 10;
+            const TIME_LIMIT_SECONDS = 60;
+            const HIGH_SCORE_KEY = 'quiz_high_score'; // Key for local storage persistence
+
+            const QUIZ_SCHEMA = {
+                type: "ARRAY",
+                items: {
+                    type: "OBJECT",
+                    properties: {
+                        question: { type: "STRING", description: "The quiz question." },
+                        options: {
+                            type: "ARRAY",
+                            description: "Exactly four distinct, non-numbered answer options.",
+                            items: { type: "STRING" }
+                        },
+                        correctAnswer: { type: "STRING", description: "The full text of the correct option, exactly matching one of the options." }
+                    },
+                    required: ["question", "options", "correctAnswer"]
+                }
+            };
+
+            const SYSTEM_PROMPT_QUESTION = `You are a quiz master. Generate a multiple-choice quiz based on the user's requested topic. Each question must have exactly four unique options and you must specify the exact correct answer text. The total number of questions must be ${QUESTION_COUNT}. The output MUST be a JSON array matching the provided schema.`;
+
+            // --- DOM Elements ---
+            const elements = {
+                startScreen: document.getElementById('start-screen'),
+                quizScreen: document.getElementById('quiz-screen'),
+                resultsScreen: document.getElementById('results-screen'),
+                loadingIndicator: document.getElementById('loading-indicator'),
+                startButton: document.getElementById('start-button'),
+                restartButton: document.getElementById('restart-button'),
+                topicInput: document.getElementById('quiz-topic'), 
+                quizTopicDisplay: document.getElementById('quiz-topic-display'),
+                questionText: document.getElementById('question-text'),
+                optionsContainer: document.getElementById('options-container'),
+                nextButton: document.getElementById('next-button'),
+                prevButton: document.getElementById('prev-button'),
+                currentQNumber: document.getElementById('current-q-number'),
+                totalQNumber: document.getElementById('total-q-number'),
+                progressBar: document.getElementById('progress-indicator'),
+                timerDisplay: document.getElementById('timer-display'),
+                feedbackArea: document.getElementById('feedback-area'),
+                feedbackCorrectness: document.getElementById('feedback-correctness'),
+                feedbackText: document.getElementById('feedback-text'),
+                feedbackSources: document.getElementById('feedback-sources'),
+                finalScore: document.getElementById('final-score'),
+                totalQuestionsResult: document.getElementById('total-questions-result'),
+                // HIGH SCORE ELEMENTS
+                startHighScore: document.getElementById('start-high-score'),
+                resultHighScoreMessage: document.getElementById('result-high-score-message'),
+                highScoreResult: document.getElementById('high-score-result'),
+                // NEW DIFFICULTY ELEMENT
+                difficultySelector: document.getElementById('difficulty-selector'),
+            };
+
+            // --- Quiz State ---
+            let quizState = {
+                questions: [],
+                answers: [], // Stores user's selected option index (0 to 3)
+                currentQuestionIndex: 0,
+                score: 0,
+                isRunning: false,
+                timerInterval: null,
+                timeRemaining: TIME_LIMIT_SECONDS,
+                topic: "", // Stores the current topic
+                highScore: 0, // Stores the best score achieved
+                difficulty: "Medium", // Default difficulty
+            };
+
+            // --- Utility Functions ---
+
+            /**
+             * Generic fetch wrapper with exponential backoff for API calls.
+             */
+            async function fetchWithRetry(url, options, maxRetries = 5) {
+                for (let i = 0; i < maxRetries; i++) {
+                    try {
+                        const response = await fetch(url, options);
+                        if (!response.ok) {
+                            // Throw error if response status is not 2xx
+                            throw new Error(`HTTP error! status: ${response.status}`);
+                        }
+                        return await response.json();
+                    } catch (error) {
+                        if (i === maxRetries - 1) {
+                            console.error("API failed after max retries:", error);
+                            throw new Error("Could not connect to the AI service.");
+                        }
+                        // Wait with exponential backoff
+                        const delay = Math.pow(2, i) * 1000 + Math.random() * 1000;
+                        await new Promise(resolve => setTimeout(resolve, delay));
+                    }
+                }
+            }
+
+            /**
+             * Fetches a list of questions from the Gemini API using structured output.
+             */
+            async function generateQuestions() {
+                const topic = elements.topicInput.value.trim();
+                const difficulty = quizState.difficulty; // Get selected difficulty
+                if (!topic) return;
+
+                quizState.topic = topic; // Store the current topic
+
+                // Construct the user query based on the topic and difficulty
+                const userQuery = `Generate a diverse set of ${QUESTION_COUNT} multiple-choice questions about the topic: "${topic}". The difficulty level should be: ${difficulty}.`;
+
+                elements.startScreen.classList.add('hidden');
+                elements.loadingIndicator.classList.remove('hidden');
+                // Apply animation to loading screen
+                elements.loadingIndicator.classList.add('animate-fade-in-up');
+
+                const payload = {
+                    contents: [{ parts: [{ text: userQuery }] }],
+                    systemInstruction: { parts: [{ text: SYSTEM_PROMPT_QUESTION }] },
+                    generationConfig: {
+                        responseMimeType: "application/json",
+                        responseSchema: QUIZ_SCHEMA
+                    }
+                };
+
+                try {
+                    const result = await fetchWithRetry(API_URL, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(payload)
+                    });
+
+                    const jsonString = result?.candidates?.[0]?.content?.parts?.[0]?.text;
+                    if (!jsonString) throw new Error("API returned an empty or invalid JSON response.");
+                    
+                    const questions = JSON.parse(jsonString);
+                    
+                    if (questions.length === 0) throw new Error("No questions were generated. Try again.");
+                    
+                    quizState.questions = questions;
+                    quizState.answers = new Array(questions.length).fill(null);
+                    
+                    elements.totalQNumber.textContent = questions.length; 
+                    elements.quizTopicDisplay.textContent = `${topic} (${difficulty})`; // Display topic and difficulty
+                    
+                    elements.loadingIndicator.classList.add('hidden');
+                    elements.quizScreen.classList.remove('hidden');
+                    elements.quizScreen.classList.add('animate-fade-in-up'); // Animate quiz screen in
+                    
+                    renderQuestion();
+                    startTimer();
+                } catch (error) {
+                    console.error("Error generating questions:", error);
+                    elements.loadingIndicator.innerHTML = `<p class="text-error text-xl">Failed to load quiz: ${error.message}</p>
+                                                        <button id="retry-button" class="mt-4 px-6 py-2 rounded-lg font-semibold bg-primary text-text-light hover:bg-fuchsia-600">Try Again</button>`;
+                    document.getElementById('retry-button').addEventListener('click', generateQuestions);
+                }
+            }
+
+            /**
+             * Renders the current question's UI and applies the entrance animation.
+             */
+            function renderQuestion() {
+                const index = quizState.currentQuestionIndex;
+                const questionData = quizState.questions[index];
+                const userAnswer = quizState.answers[index];
+                
+                // --- Reset UI and Animate ---
+                // 1. Remove animation class to reset state
+                elements.questionText.classList.remove('animate-fade-in-up');
+                elements.optionsContainer.classList.remove('animate-fade-in-up');
+                
+                // 2. Force reflow/repaint to ensure the animation restarts from the beginning
+                void elements.questionText.offsetWidth; 
+                void elements.optionsContainer.offsetWidth; 
+
+                // 3. Set content
+                elements.questionText.textContent = questionData.question;
+                elements.optionsContainer.innerHTML = '';
+                elements.feedbackArea.classList.add('hidden');
+                elements.feedbackArea.classList.remove('feedback-pulse'); 
+                elements.nextButton.disabled = userAnswer === null;
+
+                // 4. Re-add animation class
+                elements.questionText.classList.add('animate-fade-in-up');
+                elements.optionsContainer.classList.add('animate-fade-in-up');
+                
+                // Update Progress
+                elements.currentQNumber.textContent = index + 1;
+                const progress = ((index + 1) / quizState.questions.length) * 100;
+                elements.progressBar.style.width = `${progress}%`;
+
+                // Navigation Buttons
+                elements.prevButton.disabled = index === 0;
+                elements.nextButton.textContent = index === quizState.questions.length - 1 ? 'Submit Quiz' : 'Next Question';
+
+                // Create options
+                questionData.options.forEach((optionText, optionIndex) => {
+                    const isSelected = userAnswer === optionIndex;
+                    const label = document.createElement('label');
+                    // Use hover and focus classes for better interaction
+                    label.className = `quiz-option block cursor-pointer p-4 rounded-xl border-2 border-zinc-700 text-text-light transition duration-200 
+                                       bg-zinc-800 hover:bg-zinc-700 hover:text-secondary`;
+                    label.setAttribute('tabindex', '0');
+                    label.setAttribute('data-index', optionIndex);
+
+                    label.innerHTML = `
+                        <input type="radio" name="answer" value="${optionIndex}" ${isSelected ? 'checked' : ''}>
+                        <span class="font-medium">${optionText}</span>
+                    `;
+                    
+                    label.addEventListener('click', () => handleAnswerSelection(optionIndex));
+                    elements.optionsContainer.appendChild(label);
+                });
+                
+                // If the question has already been submitted/answered, show the feedback immediately
+                if (questionData.isAnswered) {
+                    showFeedback(questionData.isCorrect);
+                    stopTimer(); 
+                    elements.nextButton.disabled = false;
+                } else {
+                    resetTimer(); 
+                }
+                
+                // Disable options for an answered question
+                if (questionData.isAnswered) {
+                    elements.optionsContainer.querySelectorAll('.quiz-option').forEach(opt => opt.style.pointerEvents = 'none');
+                }
+            }
+
+            /**
+             * Handles user clicking an answer option.
+             */
+            function handleAnswerSelection(optionIndex) {
+                const index = quizState.currentQuestionIndex;
+                const questionData = quizState.questions[index];
+                
+                // Prevent changing selection if already submitted
+                if (questionData.isAnswered) return;
+
+                // Update state
+                quizState.answers[index] = optionIndex;
+                
+                // Update UI selection classes
+                elements.optionsContainer.querySelectorAll('.quiz-option').forEach((opt, idx) => {
+                    opt.classList.remove('selected');
+                    if (idx === optionIndex) {
+                        opt.classList.add('selected');
+                    }
+                });
+
+                // Enable Next button
+                elements.nextButton.disabled = false;
+            }
+
+            /**
+             * Handles the Next/Submit button click.
+             */
+            function handleNext() {
+                const index = quizState.currentQuestionIndex;
+                const questionData = quizState.questions[index];
+                const userAnswerIndex = quizState.answers[index];
+                
+                // 1. If the question hasn't been submitted, this click submits the answer
+                if (!questionData.isAnswered) {
+                    if (userAnswerIndex === null) return; 
+                    
+                    const userAnswerText = questionData.options[userAnswerIndex];
+                    const isCorrect = userAnswerText === questionData.correctAnswer;
+                    
+                    // Update question state
+                    questionData.isAnswered = true;
+                    questionData.isCorrect = isCorrect;
+                    if (isCorrect) {
+                        quizState.score++;
+                    }
+
+                    // Show feedback (color options, show explanation)
+                    showFeedback(isCorrect);
+                    
+                    // Disable options
+                    elements.optionsContainer.querySelectorAll('.quiz-option').forEach(opt => opt.style.pointerEvents = 'none');
+                    
+                    // Update Next button text
+                    elements.nextButton.textContent = index === quizState.questions.length - 1 ? 'Finish Quiz' : 'Next Question';
+                    
+                    // Call AI for explanation
+                    generateExplanation(questionData.question, questionData.correctAnswer);
+                    
+                    return; // Stay on the current question to show feedback
+                }
+                
+                // 2. If the question *has* been submitted, the click moves to the next stage
+                if (index < quizState.questions.length - 1) {
+                    quizState.currentQuestionIndex++;
+                    renderQuestion();
+                    resetTimer();
+                } else {
+                    submitQuiz();
+                }
+            }
+            
+            /**
+             * Handles the Previous button click.
+             */
+            function handlePrevious() {
+                if (quizState.currentQuestionIndex > 0) {
+                    quizState.currentQuestionIndex--;
+                    renderQuestion();
+                    stopTimer(); 
+                }
+            }
+            
+            /**
+             * Shows result colors and prepares for explanation display.
+             */
+            function showFeedback(isCorrect) {
+                const index = quizState.currentQuestionIndex;
+                const questionData = quizState.questions[index];
+                const userAnswerIndex = quizState.answers[index];
+
+                elements.feedbackArea.classList.remove('hidden');
+                elements.feedbackArea.classList.add('feedback-pulse'); // Start pulse animation
+
+                // Find the correct option index
+                const correctOptionIndex = questionData.options.findIndex(opt => opt === questionData.correctAnswer);
+                
+                // Update correctness message
+                elements.feedbackCorrectness.textContent = isCorrect ? "✅ Correct! Great job." : "❌ Incorrect. Here's why:";
+                elements.feedbackCorrectness.classList.toggle('text-success', isCorrect);
+                elements.feedbackCorrectness.classList.toggle('text-error', !isCorrect);
+                
+                // Update border color
+                elements.feedbackArea.classList.toggle('border-success', isCorrect);
+                elements.feedbackArea.classList.toggle('border-error', !isCorrect);
+                elements.feedbackArea.classList.toggle('border-primary', false); // Clear initial border
+
+                // Apply coloring to options
+                elements.optionsContainer.querySelectorAll('.quiz-option').forEach((opt, idx) => {
+                    opt.classList.remove('selected', 'incorrect', 'correct');
+                    
+                    if (idx === correctOptionIndex) {
+                        opt.classList.add('correct');
+                    } else if (idx === userAnswerIndex && !isCorrect) {
+                        opt.classList.add('incorrect');
+                    }
+                    opt.style.pointerEvents = 'none'; // Disable clicking after submission
+                });
+                
+                stopTimer(); // Stop the timer when the answer is submitted
+            }
+
+            /**
+             * Fetches an AI-generated explanation for the correct answer.
+             */
+            async function generateExplanation(question, correctAnswer) {
+                elements.feedbackText.innerHTML = `<span class="italic text-text-muted">Loading explanation...</span>`;
+                elements.feedbackSources.textContent = '';
+                
+                const prompt = `Give a very brief, 1-2 sentence factual explanation for the following question and correct answer. Question: "${question}" Correct Answer: "${correctAnswer}"`;
+                
+                const payload = {
+                    contents: [{ parts: [{ text: prompt }] }],
+                    tools: [{ "google_search": {} }], // Use Google Search for grounding
+                    systemInstruction: { parts: [{ text: "You are a concise educational assistant. Provide factual information." }] },
+                };
+
+                try {
+                    const result = await fetchWithRetry(API_URL, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(payload)
+                    });
+                    
+                    const candidate = result.candidates?.[0];
+                    const text = candidate?.content?.parts?.[0]?.text || "Could not generate a detailed explanation.";
+                    
+                    // Extract and format citations
+                    let sourceLinks = '';
+                    const groundingMetadata = candidate?.groundingMetadata;
+                    if (groundingMetadata && groundingMetadata.groundingAttributions) {
+                        const sources = groundingMetadata.groundingAttributions
+                            .filter(attr => attr.web?.uri)
+                            .slice(0, 2); // Limit to 2 sources
+                        
+                        sourceLinks = sources.map((attr, i) => 
+                            `<a href="${attr.web.uri}" target="_blank" class="text-secondary hover:underline" title="${attr.web.title}">[${i + 1}]</a>`
+                        ).join(' ');
+                    }
+
+                    elements.feedbackText.textContent = text;
+                    if (sourceLinks) {
+                        elements.feedbackSources.innerHTML = `Sources: ${sourceLinks}`;
+                    }
+                    
+                    // After explanation loads, replace the pulse effect with a static shadow
+                    elements.feedbackArea.classList.remove('feedback-pulse');
+                    elements.feedbackArea.classList.add('shadow-2xl');
+
+                } catch (error) {
+                    elements.feedbackText.textContent = "Error loading explanation.";
+                    console.error("Error generating explanation:", error);
+                }
+            }
+
+            /**
+             * Finalizes the quiz and shows results.
+             */
+            function submitQuiz() {
+                stopTimer();
+                
+                // 1. Check and Update High Score
+                const currentScore = quizState.score;
+                const totalQuestions = quizState.questions.length;
+                let message = '';
+                
+                // Clear high score animation class first
+                elements.resultHighScoreMessage.classList.remove('high-score-animation', 'text-success', 'text-secondary');
+
+                if (currentScore > quizState.highScore) {
+                    quizState.highScore = currentScore;
+                    // Persist the new high score
+                    localStorage.setItem(HIGH_SCORE_KEY, currentScore); 
+                    message = `🎉 New High Score! You beat your previous best of ${currentScore - 1}!`;
+                    elements.resultHighScoreMessage.classList.add('text-success', 'high-score-animation'); // Add success and animation
+                } else if (currentScore === quizState.highScore && currentScore > 0) {
+                    message = `You matched your best score of ${currentScore}!`;
+                    elements.resultHighScoreMessage.classList.add('text-secondary');
+                } else {
+                    message = `Keep practicing! Your best score is ${quizState.highScore}.`;
+                    elements.resultHighScoreMessage.classList.add('text-secondary');
+                }
+
+                // 2. Render and Display
+                elements.quizScreen.classList.add('hidden');
+                elements.resultsScreen.classList.remove('hidden');
+
+                elements.finalScore.textContent = currentScore;
+                elements.totalQuestionsResult.textContent = totalQuestions;
+                elements.highScoreResult.textContent = quizState.highScore;
+                elements.resultHighScoreMessage.textContent = message;
+            }
+
+            // --- Timer Functions ---
+
+            function updateTimerDisplay() {
+                const minutes = Math.floor(quizState.timeRemaining / 60);
+                const seconds = quizState.timeRemaining % 60;
+                // Change color if low time remaining
+                elements.timerDisplay.classList.toggle('text-error', quizState.timeRemaining <= 10);
+                elements.timerDisplay.textContent = `${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+            }
+
+            function startTimer() {
+                stopTimer(); // Clear any existing timer
+                quizState.timeRemaining = TIME_LIMIT_SECONDS;
+                updateTimerDisplay();
+                
+                quizState.timerInterval = setInterval(() => {
+                    if (quizState.timeRemaining > 0) {
+                        quizState.timeRemaining--;
+                        updateTimerDisplay();
+                    } else {
+                        handleTimeout();
+                    }
+                }, 1000);
+            }
+            
+            function stopTimer() {
+                clearInterval(quizState.timerInterval);
+                quizState.timerInterval = null;
+            }
+            
+            function resetTimer() {
+                // Only start the timer if it's an unanswered question
+                if (quizState.questions[quizState.currentQuestionIndex] && !quizState.questions[quizState.currentQuestionIndex].isAnswered) {
+                     stopTimer();
+                     startTimer();
+                } else {
+                    stopTimer(); // Ensure it remains stopped on answered questions
+                }
+            }
+
+            function handleTimeout() {
+                stopTimer();
+                const index = quizState.currentQuestionIndex;
+                const questionData = quizState.questions[index];
+                
+                // If not already answered, treat as incorrect submission
+                if (!questionData.isAnswered) {
+                    
+                    // Force submission logic
+                    questionData.isAnswered = true;
+                    questionData.isCorrect = false;
+                    
+                    // Show feedback for time out
+                    elements.feedbackCorrectness.textContent = "⏱️ Time's up! Answer recorded as incorrect.";
+                    elements.feedbackArea.classList.remove('hidden');
+                    elements.feedbackArea.classList.add('border-error', 'feedback-pulse');
+                    
+                    // Reveal the correct answer
+                    const correctOptionIndex = questionData.options.findIndex(opt => opt === questionData.correctAnswer);
+                    elements.optionsContainer.querySelectorAll('.quiz-option').forEach(opt => opt.style.pointerEvents = 'none');
+                    elements.optionsContainer.querySelectorAll('.quiz-option')[correctOptionIndex]?.classList.add('correct');
+                    
+                    // Generate explanation
+                    generateExplanation(questionData.question, questionData.correctAnswer);
+                    
+                    // Prepare for next action
+                    elements.nextButton.disabled = false;
+                    if (index === quizState.questions.length - 1) {
+                        elements.nextButton.textContent = 'Finish Quiz';
+                    }
+                }
+            }
+            
+            // --- Difficulty Selector Logic (NEW) ---
+            const difficultyOptions = elements.difficultySelector.querySelectorAll('.difficulty-option');
+
+            difficultyOptions.forEach(option => {
+                option.addEventListener('click', () => {
+                    const selectedDifficulty = option.getAttribute('data-difficulty');
+                    
+                    // Update state
+                    quizState.difficulty = selectedDifficulty;
+
+                    // Update UI styles (segmented control appearance)
+                    difficultyOptions.forEach(opt => {
+                        opt.classList.remove('bg-primary', 'shadow-lg', 'shadow-primary/30');
+                        if (opt.getAttribute('data-difficulty') === selectedDifficulty) {
+                            opt.classList.add('bg-primary', 'shadow-lg', 'shadow-primary/30');
+                        }
+                    });
+                });
+            });
+
+
+            // --- Event Listeners and Initialization ---
+
+            // Load initial high score and update state
+            const storedHighScore = parseInt(localStorage.getItem(HIGH_SCORE_KEY) || '0', 10);
+            quizState.highScore = storedHighScore;
+            elements.startHighScore.textContent = `${storedHighScore} / ${QUESTION_COUNT}`;
+
+
+            // Enable/disable start button based on topic input
+            elements.topicInput.addEventListener('input', () => {
+                elements.startButton.disabled = elements.topicInput.value.trim() === '';
+            });
+
+            elements.startButton.addEventListener('click', generateQuestions);
+            
+            // Restart button logic
+            elements.restartButton.addEventListener('click', () => {
+                // Reset state
+                quizState = {
+                    questions: [],
+                    answers: [],
+                    currentQuestionIndex: 0,
+                    score: 0,
+                    isRunning: false,
+                    timerInterval: null,
+                    timeRemaining: TIME_LIMIT_SECONDS,
+                    topic: "",
+                    highScore: quizState.highScore, // Preserve high score
+                    difficulty: "Medium", // Reset difficulty to default
+                };
+                
+                // Update start screen high score display 
+                elements.startHighScore.textContent = `${quizState.highScore} / ${QUESTION_COUNT}`;
+                
+                // Clear topic input for a fresh start
+                elements.topicInput.value = '';
+                elements.startButton.disabled = true;
+
+                // Reset difficulty selector UI to "Medium"
+                difficultyOptions.forEach(opt => {
+                    opt.classList.remove('bg-primary', 'shadow-lg', 'shadow-primary/30');
+                    if (opt.getAttribute('data-difficulty') === 'Medium') {
+                        opt.classList.add('bg-primary', 'shadow-lg', 'shadow-primary/30');
+                    }
+                });
+
+                elements.resultsScreen.classList.add('hidden');
+                elements.resultsScreen.classList.remove('animate-fade-in-up'); // Remove animation class
+
+                elements.startScreen.classList.remove('hidden'); 
+                elements.startScreen.classList.add('animate-fade-in-up'); // Animate start screen in
+            });
+            
+            elements.nextButton.addEventListener('click', handleNext);
+            elements.prevButton.addEventListener('click', handlePrevious);
+        };
+    </script>
+</body>
+</html>
